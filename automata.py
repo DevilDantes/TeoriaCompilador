@@ -1,6 +1,130 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+# ----------------------------------------------------------------------
+# Clases para el autómata
+# ----------------------------------------------------------------------
+class Estado:
+    def __init__(self, id_, final=False, token_tipo=None):
+        self.id = id_
+        self.final = final
+        self.token_tipo = token_tipo
+
+class AFNDepsilon:
+    def __init__(self):
+        self.estados = []
+        self.transiciones = {}   # (origen, simbolo) -> set(destinos)
+        self.siguiente_id = 0
+
+    def nuevo_estado(self, final=False, token_tipo=None):
+        estado = Estado(self.siguiente_id, final, token_tipo)
+        self.estados.append(estado)
+        self.siguiente_id += 1
+        return estado
+
+    def agregar_transicion(self, origen, destino, simbolo):
+        key = (origen.id, simbolo)
+        if key not in self.transiciones:
+            self.transiciones[key] = set()
+        self.transiciones[key].add(destino)
+
+    def clausura_epsilon(self, conjunto):
+        """Devuelve el conjunto cerrado bajo transiciones ε."""
+        pila = list(conjunto)
+        cerrado = set(conjunto)
+        while pila:
+            s = pila.pop()
+            key = (s.id, 'ε')
+            if key in self.transiciones:
+                for t in self.transiciones[key]:
+                    if t not in cerrado:
+                        cerrado.add(t)
+                        pila.append(t)
+        return cerrado
+
+    def mover(self, conjunto, simbolo):
+        """Transición directa con un carácter (sin ε)."""
+        resultado = set()
+        for s in conjunto:
+            key = (s.id, simbolo)
+            if key in self.transiciones:
+                resultado.update(self.transiciones[key])
+        return resultado
+
+# ----------------------------------------------------------------------
+# Construcción del AFND-ε global para los tokens
+# ----------------------------------------------------------------------
+def construir_afnd_lexer():
+    afnd = AFNDepsilon()
+    # Estado inicial global
+    q_start = afnd.nuevo_estado()
+
+    # --------------------------------------------------------------
+    # 1. IDENTIFICADOR: [a-zA-Z_][a-zA-Z0-9_]*
+    # --------------------------------------------------------------
+    id_inicio = afnd.nuevo_estado()
+    id_final = afnd.nuevo_estado(final=True, token_tipo="IDENTIFICADOR")
+    # Primera letra o '_'
+    for ch in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_':
+        afnd.agregar_transicion(id_inicio, id_final, ch)
+    # Bucle: letras, dígitos, '_'
+    for ch in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_':
+        afnd.agregar_transicion(id_final, id_final, ch)
+
+    # --------------------------------------------------------------
+    # 2. NÚMERO: [0-9]+(\.[0-9]+)?
+    # --------------------------------------------------------------
+    num_q0 = afnd.nuevo_estado()
+    num_q1 = afnd.nuevo_estado()
+    num_q2 = afnd.nuevo_estado()
+    num_final = afnd.nuevo_estado(final=True, token_tipo="NUMERO")
+    # dígito
+    for d in '0123456789':
+        afnd.agregar_transicion(num_q0, num_q1, d)
+        afnd.agregar_transicion(num_q1, num_q1, d)
+        afnd.agregar_transicion(num_q2, num_final, d)
+        afnd.agregar_transicion(num_final, num_final, d)
+    # entero -> final
+    afnd.agregar_transicion(num_q1, num_final, 'ε')
+    # parte decimal
+    afnd.agregar_transicion(num_q1, num_q2, '.')
+    # --------------------------------------------------------------
+    # 3. OPERADOR: + - * / ^
+    # --------------------------------------------------------------
+    op_inicio = afnd.nuevo_estado()
+    op_final = afnd.nuevo_estado(final=True, token_tipo="OPERADOR")
+    for op in '+-*/^':
+        afnd.agregar_transicion(op_inicio, op_final, op)
+
+    # --------------------------------------------------------------
+    # 4. PARÉNTESIS IZQUIERDO
+    # --------------------------------------------------------------
+    paren_izq_inicio = afnd.nuevo_estado()
+    paren_izq_final = afnd.nuevo_estado(final=True, token_tipo="PAREN_IZQ")
+    afnd.agregar_transicion(paren_izq_inicio, paren_izq_final, '(')
+
+    # --------------------------------------------------------------
+    # 5. PARÉNTESIS DERECHO
+    # --------------------------------------------------------------
+    paren_der_inicio = afnd.nuevo_estado()
+    paren_der_final = afnd.nuevo_estado(final=True, token_tipo="PAREN_DER")
+    afnd.agregar_transicion(paren_der_inicio, paren_der_final, ')')
+
+    # --------------------------------------------------------------
+    # Unión mediante transiciones ε desde el estado inicial global
+    # --------------------------------------------------------------
+    afnd.agregar_transicion(q_start, id_inicio, 'ε')
+    afnd.agregar_transicion(q_start, num_q0, 'ε')
+    afnd.agregar_transicion(q_start, op_inicio, 'ε')
+    afnd.agregar_transicion(q_start, paren_izq_inicio, 'ε')
+    afnd.agregar_transicion(q_start, paren_der_inicio, 'ε')
+
+    afnd.q_start = q_start
+    return afnd
+
+# ----------------------------------------------------------------------
+# Lexer basado en el AFND-ε
+# ----------------------------------------------------------------------
 class Token:
     def __init__(self, tipo, valor):
         self.tipo = tipo
@@ -12,49 +136,100 @@ class Token:
 class Lexer:
     def __init__(self, texto):
         self.texto = texto
-        self.pos = 0
-        self.tokens = []
+        self.afnd = construir_afnd_lexer()
 
     def analizar(self):
-        numero = ""
-        while self.pos < len(self.texto):
-            c = self.texto[self.pos]
-            # Identificador (letras, números, guión bajo)
-            if c.isalpha() or c == '_':
-                ident = ""
-                while self.pos < len(self.texto) and (self.texto[self.pos].isalpha() or self.texto[self.pos].isdigit() or self.texto[self.pos] == '_'):
-                    ident += self.texto[self.pos]
-                    self.pos += 1
-                self.tokens.append(Token("IDENTIFICADOR", ident))
-                continue
-            # Número (incluye punto y guión para negativos)
-            elif c.isdigit() or c == '.' or (c == '-' and not numero and (not self.tokens or self.tokens[-1].tipo in ["OPERADOR", "PAREN_IZQ"])):
-                numero += c
-            else:
-                if numero:
-                    if numero == "-":
-                        self.tokens.append(Token("NUMERO", -1.0))
-                        self.tokens.append(Token("OPERADOR", "*"))
-                    else:
-                        self.tokens.append(Token("NUMERO", float(numero)))
-                    numero = ""
-                if c in "+-*/^":
-                    self.tokens.append(Token("OPERADOR", c))
-                elif c == "(":
-                    self.tokens.append(Token("PAREN_IZQ", c))
-                elif c == ")":
-                    self.tokens.append(Token("PAREN_DER", c))
-                elif c.isspace():
-                    pass
-                else:
-                    raise Exception(f"Error Léxico: Carácter no reconocido '{c}'")
-            self.pos += 1
-        if numero:
-            if numero == "-":
-                raise Exception("Error Léxico: Expresión incompleta")
-            self.tokens.append(Token("NUMERO", float(numero)))
-        return self.tokens
+        tokens = []
+        pos = 0
+        n = len(self.texto)
+        while pos < n:
+            # Saltar espacios
+            while pos < n and self.texto[pos].isspace():
+                pos += 1
+            if pos >= n:
+                break
 
+            # Conjunto inicial de estados (clausura-ε del inicial)
+            current = self.afnd.clausura_epsilon({self.afnd.q_start})
+
+            last_valid_pos = None
+            last_token_tipo = None
+            last_token_value = None
+            start = pos
+
+            # Avanzar mientras sea posible
+            while pos < n:
+                c = self.texto[pos]
+                # Mover con el carácter
+                next_set = self.afnd.mover(current, c)
+                if not next_set:
+                    break
+                next_set = self.afnd.clausura_epsilon(next_set)
+                if not next_set:
+                    break
+                current = next_set
+                pos += 1
+
+                # Verificar si se ha alcanzado algún estado final
+                for s in current:
+                    if s.final:
+                        last_valid_pos = pos
+                        last_token_tipo = s.token_tipo
+                        last_token_value = self.texto[start:pos]
+
+            if last_valid_pos is None:
+                raise Exception(f"Error Léxico: carácter no reconocido '{self.texto[start]}' en posición {start}")
+
+            # Crear el token según el tipo
+            if last_token_tipo == "NUMERO":
+                try:
+                    valor = float(last_token_value)
+                except:
+                    valor = 0.0
+                tokens.append(Token("NUMERO", valor))
+            elif last_token_tipo == "IDENTIFICADOR":
+                tokens.append(Token("IDENTIFICADOR", last_token_value))
+            elif last_token_tipo == "OPERADOR":
+                tokens.append(Token("OPERADOR", last_token_value))
+            elif last_token_tipo == "PAREN_IZQ":
+                tokens.append(Token("PAREN_IZQ", last_token_value))
+            elif last_token_tipo == "PAREN_DER":
+                tokens.append(Token("PAREN_DER", last_token_value))
+            else:
+                tokens.append(Token(last_token_tipo, last_token_value))
+
+            pos = last_valid_pos
+
+        return tokens
+
+# ----------------------------------------------------------------------
+# Post‑procesamiento: combinar '-' unario con número
+# ----------------------------------------------------------------------
+def combinar_menos_unario(tokens):
+    """Convierte '-' seguido de número en un token NUMERO negativo,
+       cuando el contexto es inicio, operador o paréntesis izquierdo."""
+    nuevos = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        # Verificar si es '-' y hay un número a continuación
+        if (tok.tipo == "OPERADOR" and tok.valor == '-' and
+            i+1 < len(tokens) and tokens[i+1].tipo == "NUMERO"):
+            # Contexto: inicio de expresión, operador anterior o '('
+            if (i == 0 or
+                tokens[i-1].tipo in ("OPERADOR", "PAREN_IZQ")):
+                # Fusionar
+                numero = tokens[i+1].valor
+                nuevos.append(Token("NUMERO", -numero))
+                i += 2
+                continue
+        nuevos.append(tok)
+        i += 1
+    return nuevos
+
+# ----------------------------------------------------------------------
+# Insertar multiplicación implícita (sin cambios)
+# ----------------------------------------------------------------------
 def insertar_multiplicacion_implicita(tokens):
     nuevos = []
     for i, tok in enumerate(tokens):
@@ -80,6 +255,9 @@ def insertar_multiplicacion_implicita(tokens):
                 nuevos.append(Token("OPERADOR", "*"))
     return nuevos
 
+# ----------------------------------------------------------------------
+# El resto del código (Parser, Evaluador, GUI) permanece igual
+# ----------------------------------------------------------------------
 class Nodo:
     def __init__(self, valor, izq=None, der=None):
         self.valor = valor
@@ -254,11 +432,15 @@ class CompiladorApp:
             else:
                 expr = entrada_completa
                 variables = {}
-            # Análisis léxico y sintáctico sobre la expresión
+
+            # Análisis léxico con AFND-ε
             lexer = Lexer(expr)
             tokens_originales = lexer.analizar()
-            tokens_con_implicita = insertar_multiplicacion_implicita(tokens_originales)
+            tokens_unarios = combinar_menos_unario(tokens_originales)
+            tokens_con_implicita = insertar_multiplicacion_implicita(tokens_unarios)
             self.mostrar_tokens(tokens_con_implicita)
+
+            # Análisis sintáctico y evaluación
             parser = Parser(tokens_con_implicita)
             self.arbol = parser.construir()
             evaluador = Evaluador()
