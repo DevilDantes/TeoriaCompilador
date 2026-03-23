@@ -54,6 +54,30 @@ class Lexer:
 
         return self.tokens
 
+def insertar_multiplicacion_implicita(tokens):
+    """
+    Inserta operadores '*' implícitos en los siguientes casos:
+    - Número seguido de PAREN_IZQ   ->  Número * PAREN_IZQ
+    - PAREN_DER seguido de Número   ->  PAREN_DER * Número
+    - PAREN_DER seguido de PAREN_IZQ -> PAREN_DER * PAREN_IZQ
+    """
+    nuevos = []
+    for i, tok in enumerate(tokens):
+        nuevos.append(tok)
+        if i < len(tokens) - 1:
+            actual = tok
+            siguiente = tokens[i+1]
+            # Número seguido de '('
+            if actual.tipo == "NUMERO" and siguiente.tipo == "PAREN_IZQ":
+                nuevos.append(Token("OPERADOR", "*"))
+            # ')' seguido de Número
+            elif actual.tipo == "PAREN_DER" and siguiente.tipo == "NUMERO":
+                nuevos.append(Token("OPERADOR", "*"))
+            # ')' seguido de '('
+            elif actual.tipo == "PAREN_DER" and siguiente.tipo == "PAREN_IZQ":
+                nuevos.append(Token("OPERADOR", "*"))
+    return nuevos
+
 class Nodo:
     def __init__(self, valor, izq=None, der=None):
         self.valor = valor
@@ -154,6 +178,7 @@ class CompiladorApp:
         style.configure("TEntry", padding=6)
 
     def layout(self):
+        # Frame superior: entrada
         top_frame = ttk.Frame(self.root)
         top_frame.pack(fill="x", padx=20, pady=10)
 
@@ -165,6 +190,22 @@ class CompiladorApp:
         ttk.Button(top_frame, text="Procesar",
                    command=self.procesar).pack(side="left")
 
+        # Frame para visualización de tokens
+        tokens_frame = ttk.LabelFrame(self.root, text="Tokens generados", padding=5)
+        tokens_frame.pack(fill="x", padx=20, pady=5)
+
+        # Canvas horizontal para los tokens (scrollable)
+        self.tokens_canvas = tk.Canvas(tokens_frame, bg="#2b2b3c", height=80, highlightthickness=0)
+        scrollbar_tokens = ttk.Scrollbar(tokens_frame, orient="horizontal", command=self.tokens_canvas.xview)
+        self.tokens_canvas.configure(xscrollcommand=scrollbar_tokens.set)
+
+        scrollbar_tokens.pack(side="bottom", fill="x")
+        self.tokens_canvas.pack(side="top", fill="x", expand=True)
+
+        self.tokens_inner = ttk.Frame(self.tokens_canvas)
+        self.tokens_canvas.create_window((0,0), window=self.tokens_inner, anchor="nw")
+
+        # Frame principal: canvas para el árbol
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
@@ -190,6 +231,7 @@ class CompiladorApp:
         scrollbar_x.pack(side="bottom", fill="x")
         self.canvas.pack(side="left", fill="both", expand=True)
 
+        # Frame inferior: resultado
         bottom_frame = ttk.Frame(self.root)
         bottom_frame.pack(fill="x", padx=20, pady=10)
 
@@ -197,12 +239,47 @@ class CompiladorApp:
                                          text="Resultado: ---")
         self.label_resultado.pack()
 
+    def mostrar_tokens(self, tokens):
+        # Limpiar frame interno
+        for widget in self.tokens_inner.winfo_children():
+            widget.destroy()
+
+        # Crear un recuadro por cada token
+        for i, tok in enumerate(tokens):
+            # Frame contenedor
+            frame = tk.Frame(self.tokens_inner, bg="#2b2b3c", bd=1, relief="solid")
+            frame.pack(side="left", padx=3, pady=3)
+
+            # Etiqueta con el tipo
+            tipo_label = tk.Label(frame, text=tok.tipo, bg="#4e73df", fg="white",
+                                  font=("Segoe UI", 9, "bold"), padx=5, pady=2)
+            tipo_label.pack(fill="x")
+
+            # Etiqueta con el valor
+            valor_texto = str(tok.valor)
+            if len(valor_texto) > 15:
+                valor_texto = valor_texto[:12] + "..."
+            valor_label = tk.Label(frame, text=valor_texto, bg="#1e1e2f", fg="white",
+                                   font=("Segoe UI", 10), padx=5, pady=2)
+            valor_label.pack(fill="x")
+
+        # Actualizar scrollregion del canvas
+        self.tokens_inner.update_idletasks()
+        self.tokens_canvas.configure(scrollregion=self.tokens_canvas.bbox("all"))
+
     def procesar(self):
         try:
             lexer = Lexer(self.entrada.get())
-            tokens = lexer.analizar()
+            tokens_originales = lexer.analizar()
 
-            parser = Parser(tokens)
+            # Insertar multiplicación implícita
+            tokens_con_implicita = insertar_multiplicacion_implicita(tokens_originales)
+
+            # Mostrar tokens visualmente
+            self.mostrar_tokens(tokens_con_implicita)
+
+            # Construir AST y evaluar
+            parser = Parser(tokens_con_implicita)
             self.arbol = parser.construir()
 
             evaluador = Evaluador()
