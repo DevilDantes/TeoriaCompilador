@@ -3,9 +3,7 @@ from tkinter import ttk, messagebox
 import traceback
 import math
 
-# ----------------------------------------------------------------------
-# Clases para el autómata (AFND-ε)
-# ----------------------------------------------------------------------
+
 class Estado:
     def __init__(self, id_, final=False, token_tipo=None):
         self.id = id_
@@ -15,7 +13,7 @@ class Estado:
 class AFNDepsilon:
     def __init__(self):
         self.estados = []
-        self.transiciones = {}   # (origen, simbolo) -> set(destinos)
+        self.transiciones = {}   
         self.siguiente_id = 0
 
     def nuevo_estado(self, final=False, token_tipo=None):
@@ -51,14 +49,11 @@ class AFNDepsilon:
                 resultado.update(self.transiciones[key])
         return resultado
 
-# ----------------------------------------------------------------------
-# Construcción del AFND-ε global
-# ----------------------------------------------------------------------
+
 def construir_afnd_lexer():
     afnd = AFNDepsilon()
     q_start = afnd.nuevo_estado()
 
-    # Identificador
     id_inicio = afnd.nuevo_estado()
     id_final = afnd.nuevo_estado(final=True, token_tipo="IDENTIFICADOR")
     for ch in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_':
@@ -66,7 +61,6 @@ def construir_afnd_lexer():
     for ch in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_':
         afnd.agregar_transicion(id_final, id_final, ch)
 
-    # Número
     num_q0 = afnd.nuevo_estado()
     num_q1 = afnd.nuevo_estado()
     num_q2 = afnd.nuevo_estado()
@@ -79,23 +73,19 @@ def construir_afnd_lexer():
     afnd.agregar_transicion(num_q1, num_final, 'ε')
     afnd.agregar_transicion(num_q1, num_q2, '.')
 
-    # Operador
     op_inicio = afnd.nuevo_estado()
     op_final = afnd.nuevo_estado(final=True, token_tipo="OPERADOR")
     for op in '+-*/^':
         afnd.agregar_transicion(op_inicio, op_final, op)
 
-    # Paréntesis izquierdo
     paren_izq_inicio = afnd.nuevo_estado()
     paren_izq_final = afnd.nuevo_estado(final=True, token_tipo="PAREN_IZQ")
     afnd.agregar_transicion(paren_izq_inicio, paren_izq_final, '(')
 
-    # Paréntesis derecho
     paren_der_inicio = afnd.nuevo_estado()
     paren_der_final = afnd.nuevo_estado(final=True, token_tipo="PAREN_DER")
     afnd.agregar_transicion(paren_der_inicio, paren_der_final, ')')
 
-    # Unión mediante ε
     afnd.agregar_transicion(q_start, id_inicio, 'ε')
     afnd.agregar_transicion(q_start, num_q0, 'ε')
     afnd.agregar_transicion(q_start, op_inicio, 'ε')
@@ -105,9 +95,7 @@ def construir_afnd_lexer():
     afnd.q_start = q_start
     return afnd
 
-# ----------------------------------------------------------------------
-# Lexer basado en el AFND-ε
-# ----------------------------------------------------------------------
+
 class Token:
     def __init__(self, tipo, valor):
         self.tipo = tipo
@@ -171,9 +159,6 @@ class Lexer:
             pos = last_valid_pos
         return tokens
 
-# ----------------------------------------------------------------------
-# Post‑procesamiento
-# ----------------------------------------------------------------------
 def combinar_menos_unario(tokens):
     nuevos = []
     i = 0
@@ -215,9 +200,6 @@ def insertar_multiplicacion_implicita(tokens):
                 nuevos.append(Token("OPERADOR", "*"))
     return nuevos
 
-# ----------------------------------------------------------------------
-# Parser y Evaluador
-# ----------------------------------------------------------------------
 class Nodo:
     def __init__(self, valor, izq=None, der=None):
         self.valor = valor
@@ -294,9 +276,7 @@ class Evaluador:
             return izq / der
         if nodo.valor == '^': return izq ** der
 
-# ----------------------------------------------------------------------
-# GUI con visualización del AFND-ε
-# ----------------------------------------------------------------------
+
 class CompiladorApp:
     def __init__(self, root):
         self.root = root
@@ -324,7 +304,6 @@ class CompiladorApp:
         style.configure("TEntry", padding=6, font=("Consolas", 12))
 
     def layout(self):
-        # Barra superior
         top_frame = ttk.Frame(self.root)
         top_frame.pack(fill="x", padx=20, pady=15)
         ttk.Label(top_frame, text="Expresión:", font=("Segoe UI", 12, "bold")).pack(side="left")
@@ -332,7 +311,6 @@ class CompiladorApp:
         self.entrada.pack(side="left", padx=15)
         ttk.Button(top_frame, text="⚙ Procesar", command=self.procesar).pack(side="left")
 
-        # Marco de tokens
         tokens_frame = ttk.LabelFrame(self.root, text=" Tokens Generados ", padding=5)
         tokens_frame.pack(fill="x", padx=20, pady=5)
         self.tokens_canvas = tk.Canvas(tokens_frame, bg="#232332", height=70, highlightthickness=0)
@@ -343,7 +321,6 @@ class CompiladorApp:
         self.tokens_inner = tk.Frame(self.tokens_canvas, bg="#232332")
         self.tokens_canvas.create_window((0,0), window=self.tokens_inner, anchor="nw")
 
-        # Marco del autómata
         automata_frame = ttk.LabelFrame(self.root, text=" Mapa de Autómata Finito No Determinístico con ε ", padding=5)
         automata_frame.pack(fill="both", expand=True, padx=20, pady=5)
 
@@ -358,7 +335,6 @@ class CompiladorApp:
         scroll_x.pack(side="bottom", fill="x")
         self.canvas.pack(side="left", fill="both", expand=True)
 
-        # Barra inferior: Simulación y Resultado
         control_frame = tk.Frame(self.root, bg="#232332", bd=1, relief="ridge")
         control_frame.pack(fill="x", padx=20, pady=10)
         
@@ -372,11 +348,9 @@ class CompiladorApp:
         self.label_paso = tk.Label(btn_frame, text="Paso 0 / 0", bg="#232332", fg="#00ffcc", font=("Segoe UI", 11, "bold"))
         self.label_paso.pack(side="left", padx=20)
 
-        # Cinta (Tape) de simulación
         self.cinta_canvas = tk.Canvas(control_frame, bg="#232332", height=50, highlightthickness=0)
         self.cinta_canvas.pack(side="left", fill="x", expand=True, padx=10)
 
-        # Resultado final
         self.label_resultado = tk.Label(self.root, text="Resultado Final: ---", bg="#1a1a24", fg="#ffcc00", font=("Segoe UI", 16, "bold"))
         self.label_resultado.pack(pady=10)
 
@@ -403,29 +377,24 @@ class CompiladorApp:
     def definir_posiciones(self):
         """Distribución más balanceada y lógica del árbol de estados."""
         self.posiciones_estados = {
-            0: (100, 350),   # q_start
+            0: (100, 350),  
             
-            # Identificador
-            1: (300, 100),  # id_inicio
-            2: (550, 100),  # id_final
+            1: (300, 100), 
+            2: (550, 100),  
             
-            # Número (Tiene más estados, los agrupamos bien)
-            3: (300, 250),  # num_q0
-            4: (450, 250),  # num_q1
-            5: (600, 200),  # num_q2
-            6: (750, 280),  # num_final
+            3: (300, 250), 
+            4: (450, 250), 
+            5: (600, 200),  
+            6: (750, 280),  
             
-            # Operador
-            7: (300, 400),  # op_inicio
-            8: (550, 400),  # op_final
+            7: (300, 400),  
+            8: (550, 400), 
             
-            # Paréntesis izquierdo
-            9: (300, 520),  # paren_izq_inicio
-            10: (550, 520), # paren_izq_final
+            9: (300, 520),  
+            10: (550, 520),
             
-            # Paréntesis derecho
-            11: (300, 640), # paren_der_inicio
-            12: (550, 640)  # paren_der_final
+            11: (300, 640), 
+            12: (550, 640)  
         }
 
     def calcular_borde(self, x1, y1, x2, y2, r):
@@ -452,7 +421,6 @@ class CompiladorApp:
         self.definir_posiciones()
         RADIO = 22
 
-        # 1. Agrupar transiciones (se mantiene igual)
         transiciones_agrupadas = {}
         for (origen_id, simbolo), destinos in self.afnd.transiciones.items():
             for dest in destinos:
@@ -461,7 +429,6 @@ class CompiladorApp:
                     transiciones_agrupadas[clave] = set()
                 transiciones_agrupadas[clave].add(simbolo)
 
-        # 2. Dibujar transiciones (se mantiene igual)
         for (origen_id, destino_id), simbolos in transiciones_agrupadas.items():
             x1, y1 = self.posiciones_estados.get(origen_id, (100, 100))
             x2, y2 = self.posiciones_estados.get(destino_id, (100, 100))
@@ -484,37 +451,28 @@ class CompiladorApp:
                 dy = -12 if x1 < x2 else 12
                 self.canvas.create_text(mx, my+dy, text=texto_simbolo, fill="white", font=("Consolas", 10, "bold"))
 
-        # 3. Dibujar estados (¡NUEVO DISEÑO BASADO EN EL PDF!)
         self.objetos_canvas.clear()
         for estado in self.afnd.estados:
             x, y = self.posiciones_estados.get(estado.id, (100, 100))
             color_fondo = "#2b2b3c"
             
-            # Según el PDF: Finales naranjas, resto blancos
             color_borde = "#ffaa00" if estado.final else "white" 
             
-            formas = [] # Guardamos todas las figuras del estado para poder colorearlas después
+            formas = []
             
-            # Flecha del Punto de Entrada (q_0)
             if estado.id == self.afnd.q_start.id:
-                # Calculamos el borde superior izquierdo con trigonometría (ángulo de 135 grados)
                 bx = x + RADIO * math.cos(math.radians(-135))
                 by = y + RADIO * math.sin(math.radians(-135))
-                # Dibujamos la flecha viniendo desde más arriba a la izquierda
                 self.canvas.create_line(bx - 35, by - 35, bx, by, fill="white", arrow=tk.LAST, width=2.5)
 
-            # Dibujo de los Círculos
             if estado.final:
-                # Nodo Doble Naranja
                 formas.append(self.canvas.create_oval(x-RADIO, y-RADIO, x+RADIO, y+RADIO, fill=color_fondo, outline=color_borde, width=2))
                 formas.append(self.canvas.create_oval(x-(RADIO-5), y-(RADIO-5), x+(RADIO-5), y+(RADIO-5), fill=color_fondo, outline=color_borde, width=2))
             else:
-                # Nodo Blanco
                 formas.append(self.canvas.create_oval(x-RADIO, y-RADIO, x+RADIO, y+RADIO, fill=color_fondo, outline=color_borde, width=2))
             
             etiqueta = self.canvas.create_text(x, y, text=f"q{estado.id}", fill="white", font=("Segoe UI", 10, "bold"))
             
-            # Guardamos la lista de formas en lugar de un solo círculo
             self.objetos_canvas[estado.id] = (formas, etiqueta)
 
         self.canvas.config(scrollregion=self.canvas.bbox("all"))
@@ -537,16 +495,13 @@ class CompiladorApp:
         for estado in self.afnd.estados:
             if estado.id not in self.objetos_canvas: continue
             
-            # Ahora desempaquetamos una lista de formas
             formas, etiqueta = self.objetos_canvas[estado.id]
             
             if estado in conjunto_activo:
-                # Pintamos de azul todas las capas del estado (útil para el nodo doble)
                 for f in formas:
                     self.canvas.itemconfig(f, fill="#0077b6")
                 self.canvas.itemconfig(etiqueta, fill="#00ffcc")
             else:
-                # Devolvemos al color de fondo normal
                 for f in formas:
                     self.canvas.itemconfig(f, fill="#2b2b3c")
                 self.canvas.itemconfig(etiqueta, fill="white")
@@ -557,7 +512,6 @@ class CompiladorApp:
         n = len(cadena)
         
         estados_actuales = self.afnd.clausura_epsilon({self.afnd.q_start})
-        # Guardamos: (Mensaje a mostrar, estados actuales, índice en la cinta)
         pasos.append(("✨ Inicio (ε-clausura)", estados_actuales, 0))
         
         while pos < n:
@@ -565,12 +519,9 @@ class CompiladorApp:
             siguientes = self.afnd.mover(estados_actuales, c)
             
             if not siguientes:
-                # ¡Callejón sin salida! Esto significa que terminó un token.
-                # Simulamos lo que hace el Lexer: reiniciar al estado inicial (q_start)
                 estados_actuales = self.afnd.clausura_epsilon({self.afnd.q_start})
                 pasos.append((f"🔄 Fin de token. Reiniciando para leer '{c}'...", estados_actuales, pos))
                 
-                # Volvemos a intentar movernos con el mismo carácter, pero desde el inicio
                 siguientes = self.afnd.mover(estados_actuales, c)
                 if not siguientes:
                     pasos.append((f"❌ Error: Carácter no reconocido '{c}'", set(), pos))
@@ -589,7 +540,7 @@ class CompiladorApp:
         
         accion, estados, idx_cinta = self.steps[0]
         self.resaltar_estados(estados)
-        self.dibujar_cinta(-1) # Al inicio no hay nada seleccionado aún
+        self.dibujar_cinta(-1)
         
         self.canvas.delete("info")
         self.canvas.create_text(100, 30, text=accion, fill="#ffcc00", font=("Segoe UI", 14, "bold"), tags="info", anchor="w")
@@ -606,7 +557,6 @@ class CompiladorApp:
             self.dibujar_cinta(idx_cinta)
             
             self.canvas.delete("info")
-            # Cambiamos colores según la acción para que sea más claro visualmente
             color_texto = "#ffcc00" if "Reiniciando" in accion else ("#ff0066" if "Error" in accion else "#00ffcc")
             self.canvas.create_text(100, 30, text=accion, fill=color_texto, font=("Segoe UI", 14, "bold"), tags="info", anchor="w")
         else:
@@ -626,7 +576,7 @@ class CompiladorApp:
         def avanzar():
             if self.current_step < len(self.steps) - 1:
                 self.siguiente_paso()
-                self.root.after(800, avanzar) # 800ms por paso
+                self.root.after(800, avanzar) 
         self.root.after(800, avanzar)
 
     def procesar(self):
@@ -651,14 +601,12 @@ class CompiladorApp:
                 expr = entrada_completa
                 variables = {}
 
-            # Lexer y Post-procesamiento
             lexer = Lexer(expr)
             tokens_originales = lexer.analizar()
             tokens_unarios = combinar_menos_unario(tokens_originales)
             tokens_con_implicita = insertar_multiplicacion_implicita(tokens_unarios)
             self.mostrar_tokens(tokens_con_implicita)
 
-            # Preparar Simulación AFND
             self.afnd = lexer.afnd
             self.cadena_sim = ''.join(c for c in expr if not c.isspace())
             self.steps = self.simular_afnd(self.cadena_sim)
@@ -666,7 +614,6 @@ class CompiladorApp:
             self.dibujar_automata()
             self.reset_simulacion()
 
-            # Parser y Evaluación
             parser = Parser(tokens_con_implicita)
             arbol = parser.construir()
             evaluador = Evaluador()
