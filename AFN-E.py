@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import traceback
 import math
-
+import sympy as sp
 
 class Estado:
     def __init__(self, id_, final=False, token_tipo=None):
@@ -54,13 +54,24 @@ def construir_afnd_lexer():
     afnd = AFNDepsilon()
     q_start = afnd.nuevo_estado()
 
+    # --- IDENTIFICADORES (1 LETRA) ---
     id_inicio = afnd.nuevo_estado()
     id_final = afnd.nuevo_estado(final=True, token_tipo="IDENTIFICADOR")
     for ch in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_':
         afnd.agregar_transicion(id_inicio, id_final, ch)
-    for ch in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_':
-        afnd.agregar_transicion(id_final, id_final, ch)
+        
+    # --- NUEVO: RECONOCIMIENTO DE "sqrt" (RAIZ CUADRADA) ---
+    sq_q0 = afnd.nuevo_estado()
+    sq_q1 = afnd.nuevo_estado()
+    sq_q2 = afnd.nuevo_estado()
+    sq_q3 = afnd.nuevo_estado()
+    sq_final = afnd.nuevo_estado(final=True, token_tipo="RAIZ")
+    afnd.agregar_transicion(sq_q0, sq_q1, 's')
+    afnd.agregar_transicion(sq_q1, sq_q2, 'q')
+    afnd.agregar_transicion(sq_q2, sq_q3, 'r')
+    afnd.agregar_transicion(sq_q3, sq_final, 't')
 
+    # --- NÚMEROS ---
     num_q0 = afnd.nuevo_estado()
     num_q1 = afnd.nuevo_estado()
     num_q2 = afnd.nuevo_estado()
@@ -73,11 +84,13 @@ def construir_afnd_lexer():
     afnd.agregar_transicion(num_q1, num_final, 'ε')
     afnd.agregar_transicion(num_q1, num_q2, '.')
 
+    # --- OPERADORES ---
     op_inicio = afnd.nuevo_estado()
     op_final = afnd.nuevo_estado(final=True, token_tipo="OPERADOR")
     for op in '+-*/^':
         afnd.agregar_transicion(op_inicio, op_final, op)
 
+    # --- PARÉNTESIS ---
     paren_izq_inicio = afnd.nuevo_estado()
     paren_izq_final = afnd.nuevo_estado(final=True, token_tipo="PAREN_IZQ")
     afnd.agregar_transicion(paren_izq_inicio, paren_izq_final, '(')
@@ -86,7 +99,9 @@ def construir_afnd_lexer():
     paren_der_final = afnd.nuevo_estado(final=True, token_tipo="PAREN_DER")
     afnd.agregar_transicion(paren_der_inicio, paren_der_final, ')')
 
+    # --- CONECTAR INICIO CON LAS RAMAS ---
     afnd.agregar_transicion(q_start, id_inicio, 'ε')
+    afnd.agregar_transicion(q_start, sq_q0, 'ε') # Conexión a sqrt
     afnd.agregar_transicion(q_start, num_q0, 'ε')
     afnd.agregar_transicion(q_start, op_inicio, 'ε')
     afnd.agregar_transicion(q_start, paren_izq_inicio, 'ε')
@@ -144,7 +159,11 @@ class Lexer:
 
             if last_token_tipo == "NUMERO":
                 valor = float(last_token_value)
+                if valor.is_integer():
+                    valor = int(valor) 
                 tokens.append(Token("NUMERO", valor))
+            elif last_token_tipo == "RAIZ":
+                tokens.append(Token("RAIZ", "sqrt"))
             elif last_token_tipo == "IDENTIFICADOR":
                 tokens.append(Token("IDENTIFICADOR", last_token_value))
             elif last_token_tipo == "OPERADOR":
@@ -182,22 +201,14 @@ def insertar_multiplicacion_implicita(tokens):
         if i < len(tokens) - 1:
             actual = tok
             siguiente = tokens[i+1]
-            if actual.tipo == "NUMERO" and siguiente.tipo == "PAREN_IZQ":
+            
+            # NUEVO: Lógica unificada para reconocer multiplicaciones ocultas como 2sqrt(x) o 2x
+            trigger_izq = (actual.tipo in ["NUMERO", "IDENTIFICADOR", "PAREN_DER"])
+            trigger_der = (siguiente.tipo in ["PAREN_IZQ", "IDENTIFICADOR", "RAIZ"])
+            
+            if trigger_izq and trigger_der:
                 nuevos.append(Token("OPERADOR", "*"))
-            elif actual.tipo == "PAREN_DER" and siguiente.tipo == "NUMERO":
-                nuevos.append(Token("OPERADOR", "*"))
-            elif actual.tipo == "PAREN_DER" and siguiente.tipo == "PAREN_IZQ":
-                nuevos.append(Token("OPERADOR", "*"))
-            elif actual.tipo == "NUMERO" and siguiente.tipo == "IDENTIFICADOR":
-                nuevos.append(Token("OPERADOR", "*"))
-            elif actual.tipo == "IDENTIFICADOR" and siguiente.tipo == "NUMERO":
-                nuevos.append(Token("OPERADOR", "*"))
-            elif actual.tipo == "IDENTIFICADOR" and siguiente.tipo == "PAREN_IZQ":
-                nuevos.append(Token("OPERADOR", "*"))
-            elif actual.tipo == "PAREN_DER" and siguiente.tipo == "IDENTIFICADOR":
-                nuevos.append(Token("OPERADOR", "*"))
-            elif actual.tipo == "IDENTIFICADOR" and siguiente.tipo == "IDENTIFICADOR":
-                nuevos.append(Token("OPERADOR", "*"))
+                
     return nuevos
 
 class Nodo:
@@ -213,16 +224,26 @@ class Parser:
         self.valores = []
 
     def prioridad(self, op):
-        tabla = {'+':1, '-':1, '*':2, '/':2, '^':3}
+        # AÑADIMOS 'sqrt' CON PRIORIDAD MÁS ALTA
+        tabla = {'+':1, '-':1, '*':2, '/':2, '^':3, 'sqrt':4}
         return tabla.get(op, 0)
 
     def reducir(self):
-        if len(self.valores) < 2 or len(self.ops) < 1:
-            raise Exception("Error Sintáctico: Faltan operandos u operadores")
+        if not self.ops: return
         op = self.ops.pop()
-        der = self.valores.pop()
-        izq = self.valores.pop()
-        self.valores.append(Nodo(op, izq, der))
+        
+        # NUEVO: Si es raíz, solo saca un operando (el de la derecha)
+        if op == "sqrt":
+            if not self.valores:
+                raise Exception("Error Sintáctico: Faltan operandos para la raíz")
+            arg = self.valores.pop()
+            self.valores.append(Nodo(op, izq=arg))
+        else:
+            if len(self.valores) < 2:
+                raise Exception("Error Sintáctico: Faltan operandos u operadores")
+            der = self.valores.pop()
+            izq = self.valores.pop()
+            self.valores.append(Nodo(op, izq, der))
 
     def construir(self):
         if not self.tokens:
@@ -232,6 +253,8 @@ class Parser:
                 self.valores.append(Nodo(t.valor))
             elif t.tipo == "IDENTIFICADOR":
                 self.valores.append(Nodo(t.valor))
+            elif t.tipo == "RAIZ":
+                self.ops.append("sqrt")
             elif t.tipo == "OPERADOR":
                 while (self.ops and self.ops[-1] != "(" and
                        self.prioridad(self.ops[-1]) >= self.prioridad(t.valor)):
@@ -245,6 +268,11 @@ class Parser:
                 if not self.ops:
                     raise Exception("Error Sintáctico: Paréntesis derecho sin abrir")
                 self.ops.pop()
+                
+                # Si hay una raíz esperando resolver su paréntesis, reducimos
+                if self.ops and self.ops[-1] == "sqrt":
+                    self.reducir()
+                    
         while self.ops:
             if self.ops[-1] == "(":
                 raise Exception("Error Sintáctico: Paréntesis izquierdo sin cerrar")
@@ -257,16 +285,25 @@ class Evaluador:
     def evaluar(self, nodo, variables=None):
         if variables is None:
             variables = {}
+            
         if nodo.izq is None and nodo.der is None:
             if isinstance(nodo.valor, str):
                 if nodo.valor in variables:
                     return variables[nodo.valor]
                 else:
-                    raise Exception(f"Error Semántico: Variable '{nodo.valor}' no definida")
+                    # --- EL CAMBIO ESTÁ AQUÍ ---
+                    # Le decimos a SymPy que asuma que la letra es un número real y positivo
+                    return sp.Symbol(nodo.valor, real=True, positive=True)
             else:
                 return nodo.valor
+                
         izq = self.evaluar(nodo.izq, variables)
+        
+        if nodo.valor == 'sqrt':
+            return sp.sqrt(izq)
+            
         der = self.evaluar(nodo.der, variables)
+        
         if nodo.valor == '+': return izq + der
         if nodo.valor == '-': return izq - der
         if nodo.valor == '*': return izq * der
@@ -276,11 +313,43 @@ class Evaluador:
             return izq / der
         if nodo.valor == '^': return izq ** der
 
+# --- FUNCIÓN PARA EMBELLECER EL RESULTADO ---
+def formato_bonito(texto):
+    superscripts = {"0":"⁰", "1":"¹", "2":"²", "3":"³", "4":"⁴", "5":"⁵", "6":"⁶", "7":"⁷", "8":"⁸", "9":"⁹"}
+    # Limpiamos texto y cambiamos la palabra sqrt por el símbolo
+    texto_str = str(texto).replace(" ", "").replace("sqrt", "√") 
+    
+    nuevo_texto = ""
+    i = 0
+    while i < len(texto_str):
+        # Convertir potencias a superíndices reales
+        if texto_str[i:i+2] == "**":
+            i += 2
+            while i < len(texto_str) and texto_str[i].isdigit():
+                nuevo_texto += superscripts.get(texto_str[i], texto_str[i])
+                i += 1
+            continue
+        # Eliminar asteriscos de multiplicación
+        elif texto_str[i] == "*":
+            i += 1
+            continue
+        else:
+            nuevo_texto += texto_str[i]
+            i += 1
+            
+    # Dar un formato espaciado y limpio a sumas y restas
+    nuevo_texto = nuevo_texto.replace("+", " + ").replace("-", " - ")
+    # Evitar espacio inicial extraño si el primer número es negativo
+    if nuevo_texto.startswith(" - "):
+        nuevo_texto = "-" + nuevo_texto[3:]
+        
+    return nuevo_texto.strip()
+# --------------------------------------------------
 
 class CompiladorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Mini Compilador - Visualización AFND-ε Interactiva")
+        self.root.title("Mini Compilador Algebraico - Visualización AFND-ε Interactiva")
         self.root.geometry("1400x850")
         self.root.configure(bg="#1a1a24")
         self.afnd = None
@@ -307,8 +376,14 @@ class CompiladorApp:
         top_frame = ttk.Frame(self.root)
         top_frame.pack(fill="x", padx=20, pady=15)
         ttk.Label(top_frame, text="Expresión:", font=("Segoe UI", 12, "bold")).pack(side="left")
-        self.entrada = ttk.Entry(top_frame, width=70)
+        self.entrada = ttk.Entry(top_frame, width=50)
         self.entrada.pack(side="left", padx=15)
+        
+        ttk.Label(top_frame, text="Acción:", font=("Segoe UI", 11, "bold")).pack(side="left")
+        self.modo_var = tk.StringVar(value="Simplificar")
+        menu_modo = ttk.Combobox(top_frame, textvariable=self.modo_var, values=["Expandir", "Factorizar", "Simplificar"], width=12, state="readonly")
+        menu_modo.pack(side="left", padx=10)
+        
         ttk.Button(top_frame, text="⚙ Procesar", command=self.procesar).pack(side="left")
 
         tokens_frame = ttk.LabelFrame(self.root, text=" Tokens Generados ", padding=5)
@@ -351,7 +426,7 @@ class CompiladorApp:
         self.cinta_canvas = tk.Canvas(control_frame, bg="#232332", height=50, highlightthickness=0)
         self.cinta_canvas.pack(side="left", fill="x", expand=True, padx=10)
 
-        self.label_resultado = tk.Label(self.root, text="Resultado Final: ---", bg="#1a1a24", fg="#ffcc00", font=("Segoe UI", 16, "bold"))
+        self.label_resultado = tk.Label(self.root, text="Resultado Final: ---", bg="#1a1a24", fg="#ffcc00", font=("Segoe UI", 18, "bold"))
         self.label_resultado.pack(pady=10)
 
     def mostrar_tokens(self, tokens):
@@ -375,30 +450,36 @@ class CompiladorApp:
         self.tokens_canvas.configure(scrollregion=self.tokens_canvas.bbox("all"))
 
     def definir_posiciones(self):
-        """Distribución más balanceada y lógica del árbol de estados."""
+        # Estados originales
         self.posiciones_estados = {
             0: (100, 350),  
-            
             1: (300, 100), 
             2: (550, 100),  
             
-            3: (300, 250), 
-            4: (450, 250), 
-            5: (600, 200),  
-            6: (750, 280),  
+            # Estados para sqrt (Nuevos coordenadas)
+            3: (300, 180), 
+            4: (430, 180), 
+            5: (560, 180), 
+            6: (690, 180), 
+            7: (820, 180),
             
-            7: (300, 400),  
-            8: (550, 400), 
+            # Ajuste de coordenadas del resto de ramas
+            8: (300, 280), 
+            9: (450, 280), 
+            10: (600, 240),  
+            11: (750, 320),  
             
-            9: (300, 520),  
-            10: (550, 520),
+            12: (300, 420),  
+            13: (550, 420), 
             
-            11: (300, 640), 
-            12: (550, 640)  
+            14: (300, 540),  
+            15: (550, 540),
+            
+            16: (300, 660), 
+            17: (550, 660)  
         }
 
     def calcular_borde(self, x1, y1, x2, y2, r):
-        """Calcula el punto de intersección de la línea en el borde del círculo."""
         angulo = math.atan2(y2 - y1, x2 - x1)
         bx1 = x1 + r * math.cos(angulo)
         by1 = y1 + r * math.sin(angulo)
@@ -616,9 +697,24 @@ class CompiladorApp:
 
             parser = Parser(tokens_con_implicita)
             arbol = parser.construir()
+            
             evaluador = Evaluador()
-            resultado = evaluador.evaluar(arbol, variables)
-            self.label_resultado.config(text=f"Resultado Final: {resultado}", fg="#00ffcc")
+            resultado_bruto = evaluador.evaluar(arbol, variables)
+            
+            if isinstance(resultado_bruto, sp.Expr):
+                accion = self.modo_var.get()
+                if accion == "Expandir":
+                    resultado_sympy = sp.expand(resultado_bruto)
+                elif accion == "Factorizar":
+                    resultado_sympy = sp.factor(resultado_bruto)
+                elif accion == "Simplificar":
+                    resultado_sympy = sp.simplify(resultado_bruto)
+            else:
+                resultado_sympy = resultado_bruto
+                
+            resultado_final = formato_bonito(resultado_sympy)
+                
+            self.label_resultado.config(text=f"Resultado Final: {resultado_final}", fg="#00ffcc")
 
         except Exception as e:
             print("=== ERROR DETECTADO ===")
